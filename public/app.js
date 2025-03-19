@@ -161,13 +161,13 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize Socket.io connection
     function initializeSocketConnection() {
-// Connect to the server
-socket = io('http://localhost:3000', {
-    query: {
-        username: state.username,
-        role: state.userRole
-    }
-});
+        // Connect to the server using the current URL origin
+        socket = io(window.location.origin, {
+            query: {
+                username: state.username,
+                role: state.userRole
+            }
+        });
         
         // Socket event handlers
         socket.on('connect', () => {

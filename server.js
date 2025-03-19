@@ -1,16 +1,14 @@
-/**
- * GyaanGanga Voice Channel Server
- * Express and Socket.io implementation for WebRTC signaling
- */
 const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
 const cors = require('cors');
 
-// Create Express app
+// Create Express app and server
 const app = express();
 const server = http.createServer(app);
+
+// Set up Socket.io with CORS enabled
 const io = socketIO(server, {
     cors: {
         origin: '*',
@@ -18,13 +16,13 @@ const io = socketIO(server, {
     }
 });
 
-// Enable CORS
+// Enable CORS for Express
 app.use(cors());
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Available voice channels
+// Voice channels configuration
 const channels = {
     'class-8': { name: 'Class 8', participants: {}, maxParticipants: 30 },
     'class-9': { name: 'Class 9', participants: {}, maxParticipants: 30 },
@@ -34,11 +32,9 @@ const channels = {
     'entrance-prep': { name: 'Entrance Prep', participants: {}, maxParticipants: 50 }
 };
 
-// Connected users
+// Connected users storage
 const users = {};
-
-// Clean up inactive users (10 minutes)
-const inactivityTimeout = 10 * 60 * 1000;
+const inactivityTimeout = 10 * 60 * 1000; // 10 minutes
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
@@ -153,109 +149,6 @@ io.on('connection', (socket) => {
                     participants: channels[channelId].participants
                 });
             }
-        }
-    });
-    
-    // Teacher muting a user
-    socket.on('muteUser', (data) => {
-        const { userId } = data;
-        const user = users[socket.id];
-        const targetUser = users[userId];
-        
-        // Check if the requester is a teacher
-        if (user && user.role === 'teacher' && targetUser && user.channelId === targetUser.channelId) {
-            const channelId = user.channelId;
-            
-            // Update target user's mute status
-            targetUser.isMuted = true;
-            
-            // Update in channel participants
-            if (channels[channelId] && channels[channelId].participants[userId]) {
-                channels[channelId].participants[userId].isMuted = true;
-                
-                // Notify all users in the channel
-                io.to(channelId).emit('userMuted', {
-                    userId: userId,
-                    byUserId: socket.id
-                });
-                
-                // Notify all users of updated participants list
-                io.to(channelId).emit('userJoined', {
-                    username: targetUser.username,
-                    participants: channels[channelId].participants
-                });
-            }
-        }
-    });
-    
-    // Teacher unmuting a user
-    socket.on('unmuteUser', (data) => {
-        const { userId } = data;
-        const user = users[socket.id];
-        const targetUser = users[userId];
-        
-        // Check if the requester is a teacher
-        if (user && user.role === 'teacher' && targetUser && user.channelId === targetUser.channelId) {
-            const channelId = user.channelId;
-            
-            // Update target user's mute status
-            targetUser.isMuted = false;
-            
-            // Update in channel participants
-            if (channels[channelId] && channels[channelId].participants[userId]) {
-                channels[channelId].participants[userId].isMuted = false;
-                
-                // Notify all users in the channel
-                io.to(channelId).emit('userUnmuted', {
-                    userId: userId,
-                    byUserId: socket.id
-                });
-                
-                // Notify all users of updated participants list
-                io.to(channelId).emit('userJoined', {
-                    username: targetUser.username,
-                    participants: channels[channelId].participants
-                });
-            }
-        }
-    });
-    
-    // Handle speaking state change
-    socket.on('speakingStateChanged', (data) => {
-        const { channelId, isSpeaking } = data;
-        const user = users[socket.id];
-        
-        if (user && user.channelId === channelId) {
-            user.isSpeaking = isSpeaking;
-            user.lastActivity = Date.now();
-            
-            // Update in channel participants
-            if (channels[channelId] && channels[channelId].participants[socket.id]) {
-                channels[channelId].participants[socket.id].isSpeaking = isSpeaking;
-                
-                // Notify all users in the channel about speaking status
-                io.to(channelId).emit('speakingStatus', {
-                    userId: socket.id,
-                    isSpeaking: isSpeaking
-                });
-            }
-        }
-    });
-    
-    // Send emoji reaction
-    socket.on('sendEmojiReaction', (data) => {
-        const { channelId, emoji } = data;
-        const user = users[socket.id];
-        
-        if (user && user.channelId === channelId) {
-            user.lastActivity = Date.now();
-            
-            // Broadcast emoji reaction to all users in the channel
-            io.to(channelId).emit('emojiReaction', {
-                userId: socket.id,
-                username: user.username,
-                emoji: emoji
-            });
         }
     });
     
@@ -396,43 +289,13 @@ function getChannelCounts() {
     return counts;
 }
 
-// Clean up inactive users periodically
-setInterval(() => {
-    const now = Date.now();
-    
-    Object.keys(users).forEach(userId => {
-        const user = users[userId];
-        
-        // Check if user is inactive for too long
-        if (user.channelId && now - user.lastActivity > inactivityTimeout) {
-            console.log(`User ${userId} timed out due to inactivity`);
-            
-            // Get socket for this user
-            const socket = io.sockets.sockets.get(userId);
-            
-            if (socket) {
-                // Leave current channel
-                leaveChannel(socket, user.channelId);
-                
-                // Notify the user
-                socket.emit('error', 'Disconnected due to inactivity');
-            } else {
-                // If socket not found, just clean up the user data
-                if (user.channelId && channels[user.channelId]) {
-                    delete channels[user.channelId].participants[userId];
-                    
-                    // Broadcast updated channel counts
-                    io.emit('channelCounts', getChannelCounts());
-                }
-                
-                delete users[userId];
-            }
-        }
-    });
-}, 60000); // Check every minute
-
-// Default route
+// Default route - serve the main HTML file
 app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Catch-all route to handle direct URL access for SPA
+app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
