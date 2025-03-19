@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GyaanGanga Voice Channels</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Left Sidebar - Channel List -->
+        <div class="sidebar">
+            <div class="server-header">
+                <h2>GyaanGanga</h2>
+                <div class="online-indicator"></div>
+            </div>
+            <div class="channels-section">
+                <h3>Voice Channels</h3>
+                <div class="channel-list">
+                    <div class="channel" data-channel="class-8">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <span>Class 8</span>
+                        <span class="user-count">0</span>
+                    </div>
+                    <div class="channel" data-channel="class-9">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <span>Class 9</span>
+                        <span class="user-count">0</span>
+                    </div>
+                    <div class="channel" data-channel="class-10">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <span>Class 10</span>
+                        <span class="user-count">0</span>
+                    </div>
+                    <div class="channel" data-channel="class-11">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <span>Class 11</span>
+                        <span class="user-count">0</span>
+                    </div>
+                    <div class="channel" data-channel="class-12">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <span>Class 12</span>
+                        <span class="user-count">0</span>
+                    </div>
+                    <div class="channel" data-channel="entrance-prep">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <span>Entrance Prep</span>
+                        <span class="user-count">0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="user-profile">
+                <div class="user-avatar">
+                    <img id="user-avatar-img" src="https://via.placeholder.com/40" alt="User Avatar">
+                    <div class="status-indicator"></div>
+                </div>
+                <div class="user-info">
+                    <span id="username">Guest User</span>
+                    <span id="user-status">Online</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <div class="welcome-screen" id="welcome-screen">
+                <div class="login-container">
+                    <h2>Join GyaanGanga Voice</h2>
+                    <div class="input-group">
+                        <label for="username-input">Enter your name</label>
+                        <input type="text" id="username-input" placeholder="Your name">
+                    </div>
+                    <div class="input-group">
+                        <label for="user-role">Select your role</label>
+                        <select id="user-role">
+                            <option value="student">Student</option>
+                            <option value="teacher">Teacher</option>
+                        </select>
+                    </div>
+                    <button id="login-button">Join Voice</button>
+                </div>
+            </div>
+
+            <div class="channel-view hidden" id="channel-view">
+                <div class="channel-header">
+                    <div class="current-channel">
+                        <i class="fa-solid fa-volume-high"></i>
+                        <h2 id="current-channel-name">Not Connected</h2>
+                    </div>
+                    <div class="channel-actions">
+                        <button id="disconnect-btn" title="Disconnect">
+                            <i class="fa-solid fa-phone-slash"></i>
+                        </button>
+                        <div class="volume-control">
+                            <i class="fa-solid fa-volume-low"></i>
+                            <input type="range" id="volume-slider" min="0" max="100" value="75">
+                            <i class="fa-solid fa-volume-high"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="channel-participants">
+                    <h3>Participants</h3>
+                    <div id="participants-list" class="participants-list">
+                        <!-- Participants will be added here dynamically -->
+                    </div>
+                </div>
+
+                <div class="channel-controls">
+                    <div class="control-actions">
+                        <button id="toggle-noise-suppression" class="control-button">
+                            <i class="fa-solid fa-filter"></i>
+                            <span>Noise Suppression</span>
+                        </button>
+                        <button id="toggle-push-to-talk" class="control-button">
+                            <i class="fa-solid fa-keyboard"></i>
+                            <span>Push to Talk</span>
+                        </button>
+                    </div>
+                    <div class="reactions">
+                        <button class="emoji-reaction" data-emoji="👍">👍</button>
+                        <button class="emoji-reaction" data-emoji="👏">👏</button>
+                        <button class="emoji-reaction" data-emoji="❓">❓</button>
+                        <button class="emoji-reaction" data-emoji="🎉">🎉</button>
+                    </div>
+                </div>
+
+                <div class="pomodoro-timer">
+                    <h3>Study Timer</h3>
+                    <div class="timer-display">
+                        <span id="timer-minutes">25</span>:<span id="timer-seconds">00</span>
+                    </div>
+                    <div class="timer-controls">
+                        <button id="start-timer">Start</button>
+                        <button id="reset-timer">Reset</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Mic Button -->
+    <div class="mic-button" id="mic-button">
+        <i class="fa-solid fa-microphone-slash"></i>
+    </div>
+
+    <!-- Live Notifications Display -->
+    <div class="notifications" id="notifications"></div>
+
+    <!-- Script Files -->
+    <script src="app.js"></script>
+    <script src="voice-handler.js"></script>
+    <script src="ui-controller.js"></script>
+</body>
+</html>
