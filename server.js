@@ -8,21 +8,39 @@ const socketIO = require('socket.io');
 const path = require('path');
 const cors = require('cors');
 
-// Create Express app
+// Create Express app and server
 const app = express();
 const server = http.createServer(app);
-const io = socketIO(server, {
-    cors: {
-        origin: '*',
-        methods: ['GET', 'POST']
-    }
-});
 
-// Enable CORS
-app.use(cors());
+// Enable CORS for Express
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    credentials: true
+}));
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Default route - serve the main HTML file
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Catch-all route to handle direct URL access for SPA
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Initialize Socket.io with CORS settings
+const io = socketIO(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"],
+        credentials: true,
+        allowedHeaders: ["Content-Type"]
+    }
+});
 
 // Available voice channels
 const channels = {
@@ -40,9 +58,57 @@ const users = {};
 // Clean up inactive users (10 minutes)
 const inactivityTimeout = 10 * 60 * 1000;
 
+// Helper function to get channel user counts
+function getChannelCounts() {
+    const counts = {};
+    
+    Object.keys(channels).forEach(channelId => {
+        counts[channelId] = Object.keys(channels[channelId].participants).length;
+    });
+    
+    return counts;
+}
+
+// Helper function to handle leaving a channel
+function leaveChannel(socket, channelId) {
+    const user = users[socket.id];
+    
+    if (!user || !channels[channelId]) return;
+    
+    // Remove user from channel participants
+    if (channels[channelId].participants[socket.id]) {
+        delete channels[channelId].participants[socket.id];
+        
+        // Leave the socket.io room
+        socket.leave(channelId);
+        
+        // Update user's channel ID
+        user.channelId = null;
+        
+        // Notify other users in the channel
+        socket.to(channelId).emit('userLeft', {
+            username: user.username,
+            participants: channels[channelId].participants
+        });
+        
+        // Notify other users that a peer has disconnected
+        socket.to(channelId).emit('userDisconnected', {
+            userId: socket.id
+        });
+        
+        // Broadcast updated channel counts
+        io.emit('channelCounts', getChannelCounts());
+    }
+}
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
     console.log(`New connection: ${socket.id}`);
+    
+    // Add debugging for all events
+    socket.onAny((event, ...args) => {
+        console.log(`[${socket.id}] ${event}`, JSON.stringify(args).substring(0, 100) + '...');
+    });
     
     // Get user info from query params
     const username = socket.handshake.query.username || 'Anonymous';
@@ -353,49 +419,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// Helper function to handle leaving a channel
-function leaveChannel(socket, channelId) {
-    const user = users[socket.id];
-    
-    if (!user || !channels[channelId]) return;
-    
-    // Remove user from channel participants
-    if (channels[channelId].participants[socket.id]) {
-        delete channels[channelId].participants[socket.id];
-        
-        // Leave the socket.io room
-        socket.leave(channelId);
-        
-        // Update user's channel ID
-        user.channelId = null;
-        
-        // Notify other users in the channel
-        socket.to(channelId).emit('userLeft', {
-            username: user.username,
-            participants: channels[channelId].participants
-        });
-        
-        // Notify other users that a peer has disconnected
-        socket.to(channelId).emit('userDisconnected', {
-            userId: socket.id
-        });
-        
-        // Broadcast updated channel counts
-        io.emit('channelCounts', getChannelCounts());
-    }
-}
-
-// Helper function to get channel user counts
-function getChannelCounts() {
-    const counts = {};
-    
-    Object.keys(channels).forEach(channelId => {
-        counts[channelId] = Object.keys(channels[channelId].participants).length;
-    });
-    
-    return counts;
-}
-
 // Clean up inactive users periodically
 setInterval(() => {
     const now = Date.now();
@@ -430,16 +453,6 @@ setInterval(() => {
         }
     });
 }, 60000); // Check every minute
-
-// Default route - serve the main HTML file
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Catch-all route to handle direct URL access for SPA
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
 
 // Start the server
 const PORT = process.env.PORT || 3000;
