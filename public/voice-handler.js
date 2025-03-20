@@ -9,7 +9,7 @@ class VoiceHandler {
         this.peerConnections = {};
         this.channelId = null;
         this.audioContext = null;
-        this.audioProcessors = {};
+        this.volume = 0.8;
         this.mediaConstraints = {
             audio: {
                 echoCancellation: true,
@@ -18,9 +18,6 @@ class VoiceHandler {
             },
             video: false
         };
-        this.volume = 0.8; // Reduced default volume to help with echo
-        this.connectionTimeout = 30000; // 30 seconds timeout for connection attempts
-        this.localAudioTrackIds = new Set(); // Track local audio track IDs to avoid echo
 
         // Set up socket event listeners for WebRTC signaling
         this.setupSocketEvents();
@@ -34,30 +31,26 @@ class VoiceHandler {
         this.socket.on('offer', async (data) => {
             console.log('Received offer from peer:', data.from);
             
+            // Create a new RTCPeerConnection if it doesn't exist
+            if (!this.peerConnections[data.from]) {
+                this.createPeerConnection(data.from);
+            }
+            
             try {
-                // Create a new RTCPeerConnection if it doesn't exist
-                if (!this.peerConnections[data.from]) {
-                    this.createPeerConnection(data.from);
-                }
-                
                 // Set the remote description with the received offer
                 await this.peerConnections[data.from].setRemoteDescription(new RTCSessionDescription(data.offer));
-                console.log('Set remote description successfully from offer');
                 
                 // Create an answer to the offer
                 const answer = await this.peerConnections[data.from].createAnswer();
                 await this.peerConnections[data.from].setLocalDescription(answer);
-                console.log('Created and set local answer');
                 
                 // Send the answer back to the peer
                 this.socket.emit('answer', {
                     to: data.from,
                     answer: answer
                 });
-                console.log('Sent answer to peer:', data.from);
             } catch (error) {
                 console.error('Error handling offer:', error);
-                this.showError('Error handling call offer: ' + error.message);
             }
         });
         
@@ -69,11 +62,9 @@ class VoiceHandler {
                 // Set the remote description with the received answer
                 if (this.peerConnections[data.from]) {
                     await this.peerConnections[data.from].setRemoteDescription(new RTCSessionDescription(data.answer));
-                    console.log('Set remote description successfully from answer');
                 }
             } catch (error) {
                 console.error('Error handling answer:', error);
-                this.showError('Error handling call answer: ' + error.message);
             }
         });
         
@@ -83,9 +74,7 @@ class VoiceHandler {
             
             try {
                 if (this.peerConnections[data.from]) {
-                    // Add the received ICE candidate to the peer connection
                     await this.peerConnections[data.from].addIceCandidate(new RTCIceCandidate(data.candidate));
-                    console.log('Successfully added ICE candidate');
                 }
             } catch (error) {
                 console.error('Error adding ICE candidate:', error);
@@ -107,19 +96,6 @@ class VoiceHandler {
             // Close the connection to the user
             this.closePeerConnection(data.userId);
         });
-        
-        // Handle speaking status updates
-        this.socket.on('speakingStatus', (data) => {
-            // Update UI to show who is speaking
-            const participantEl = document.getElementById(`participant-${data.userId}`);
-            if (participantEl) {
-                if (data.isSpeaking) {
-                    participantEl.classList.add('speaking');
-                } else {
-                    participantEl.classList.remove('speaking');
-                }
-            }
-        });
     }
 
     /**
@@ -131,34 +107,14 @@ class VoiceHandler {
         
         try {
             console.log('Attempting to access microphone...');
-            // Get user's microphone stream with enhanced echo cancellation
-            this.localStream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    // Enhanced echo cancellation options
-                    echoCancellationType: 'system',
-                    suppressLocalAudioPlayback: true
-                },
-                video: false
-            });
-            console.log('Microphone access granted', this.localStream);
-            
-            // Store local audio track IDs to prevent echo
-            this.localStream.getTracks().forEach(track => {
-                this.localAudioTrackIds.add(track.id);
-                console.log('Stored local track ID:', track.id);
-            });
+            // Get user's microphone stream
+            this.localStream = await navigator.mediaDevices.getUserMedia(this.mediaConstraints);
+            console.log('Microphone access granted');
             
             // Set initial mute state
             this.setMicMuted(true);
             
-            // Initialize audio context for processing
-            this.initAudioContext();
-            
             // Tell the server we're ready to start voice connections
-            console.log('Signaling readiness for voice connections');
             this.socket.emit('readyForVoice', { channelId }, (response) => {
                 if (response.success) {
                     console.log('Ready for voice connections, peers:', response.peers);
@@ -167,19 +123,19 @@ class VoiceHandler {
                         this.createPeerConnectionAndOffer(peerId);
                     });
                 } else {
-                    console.error('Failed to signal readiness:', response.error);
-                    this.showError('Failed to connect to voice: ' + response.error);
+                    console.error('Failed to ready for voice:', response.error);
                 }
             });
             
             // Set up voice activity detection
             this.setupVoiceActivityDetection();
-            
-            // Show success notification
-            this.showNotification('Voice connected successfully', 'success');
         } catch (error) {
             console.error('Error joining voice channel:', error);
-            this.showError('Could not access microphone. Please ensure you have given permission: ' + error.message);
+            if (window.showNotification) {
+                window.showNotification('Could not access microphone. Please ensure you have given permission.', 'error');
+            } else {
+                alert('Could not access microphone. Please ensure you have given permission.');
+            }
         }
     }
 
@@ -193,20 +149,10 @@ class VoiceHandler {
             this.localStream = null;
         }
         
-        // Clear local track IDs
-        this.localAudioTrackIds.clear();
-        
         // Close all peer connections
         Object.keys(this.peerConnections).forEach(peerId => {
             this.closePeerConnection(peerId);
         });
-        
-        // Clean up audio processing
-        if (this.audioContext) {
-            this.audioContext.close();
-            this.audioContext = null;
-            this.audioProcessors = {};
-        }
         
         this.channelId = null;
         console.log('Voice channel left, all connections closed');
@@ -224,34 +170,17 @@ class VoiceHandler {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                // Public TURN server for testing
+                // Free TURN server for testing
                 {
                     urls: 'turn:openrelay.metered.ca:80',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                },
-                {
-                    urls: 'turn:openrelay.metered.ca:443',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                },
-                {
-                    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
                     username: 'openrelayproject',
                     credential: 'openrelayproject'
                 }
             ]
         };
         
-        // Create the RTCPeerConnection with echo cancellation optimizations
-        const peerConnection = new RTCPeerConnection({
-            ...iceServers,
-            // RTCPeerConnection options to help with echo cancellation
-            sdpSemantics: 'unified-plan',
-            // Bundle policy to reduce echo
-            bundlePolicy: 'max-bundle'
-        });
-        
+        // Create the RTCPeerConnection
+        const peerConnection = new RTCPeerConnection(iceServers);
         this.peerConnections[peerId] = peerConnection;
         
         // Add local stream tracks to the connection
@@ -275,64 +204,14 @@ class VoiceHandler {
             }
         };
         
-        // Handle ICE connection state changes
-        peerConnection.oniceconnectionstatechange = () => {
-            console.log(`ICE connection state for peer ${peerId}:`, peerConnection.iceConnectionState);
-            
-            // Handle connection failures
-            if (peerConnection.iceConnectionState === 'failed' || 
-                peerConnection.iceConnectionState === 'disconnected') {
-                console.warn(`Connection to peer ${peerId} failed or disconnected. Attempting to restart ICE`);
-                
-                // Try to restart ICE connection
-                peerConnection.restartIce();
-            }
-        };
-        
         // Handle connection state changes
         peerConnection.onconnectionstatechange = () => {
             console.log(`Connection state for peer ${peerId}:`, peerConnection.connectionState);
-            
-            // Handle connection failures
-            if (peerConnection.connectionState === 'failed') {
-                console.error(`Connection to peer ${peerId} failed. Closing and recreating connection`);
-                
-                // Close and recreate the connection
-                this.closePeerConnection(peerId);
-                setTimeout(() => {
-                    this.createPeerConnectionAndOffer(peerId);
-                }, 1000);
-            }
         };
         
-        // Set a timeout to detect stalled connection attempts
-        const connectionTimeoutId = setTimeout(() => {
-            // If still connecting after timeout, restart the connection
-            if (peerConnection.iceConnectionState === 'checking' || 
-                peerConnection.iceConnectionState === 'new') {
-                console.warn(`Connection attempt to peer ${peerId} taking too long. Restarting.`);
-                peerConnection.restartIce();
-            }
-        }, this.connectionTimeout);
-        
-        // Clear timeout when connection succeeds
-        peerConnection.addEventListener('iceconnectionstatechange', () => {
-            if (peerConnection.iceConnectionState === 'connected' || 
-                peerConnection.iceConnectionState === 'completed') {
-                clearTimeout(connectionTimeoutId);
-            }
-        });
-        
-        // Handle incoming audio tracks with echo prevention
+        // Handle incoming audio tracks
         peerConnection.ontrack = (event) => {
-            console.log(`Received track from peer ${peerId}`, event.track);
-            
-            // Check if this is one of our own tracks (echo prevention)
-            if (this.localAudioTrackIds.has(event.track.id)) {
-                console.log('Ignoring local track to prevent echo:', event.track.id);
-                return;
-            }
-            
+            console.log(`Received track from peer ${peerId}`);
             const stream = event.streams[0];
             
             // Create an audio element to play the remote stream
@@ -341,17 +220,12 @@ class VoiceHandler {
             audioEl.autoplay = true;
             audioEl.id = `audio-${peerId}`;
             
-            // Adjust volume to prevent echo
+            // Adjust volume
             audioEl.volume = this.volume;
             
             // Add the audio element to the DOM (hidden)
             audioEl.style.display = 'none';
             document.body.appendChild(audioEl);
-            
-            // Log and store all tracks from the remote stream for debugging
-            stream.getTracks().forEach(track => {
-                console.log('Remote track:', track.id, track.kind, track.enabled);
-            });
             
             // Set up voice activity detection for this remote stream
             this.setupRemoteVoiceDetection(stream, peerId);
@@ -369,18 +243,10 @@ class VoiceHandler {
         const peerConnection = this.createPeerConnection(peerId);
         
         try {
-            // Create an offer with echo cancellation options
-            const offerOptions = {
-                offerToReceiveAudio: true,
-                offerToReceiveVideo: false,
-                voiceActivityDetection: true
-            };
-            
             // Create an offer
-            const offer = await peerConnection.createOffer(offerOptions);
-            
-            // Modify SDP to improve echo cancellation
-            offer.sdp = this.modifySdpForEchoCancellation(offer.sdp);
+            const offer = await peerConnection.createOffer({
+                offerToReceiveAudio: true
+            });
             
             // Set the local description
             await peerConnection.setLocalDescription(offer);
@@ -393,18 +259,7 @@ class VoiceHandler {
             console.log('Sent offer to peer:', peerId);
         } catch (error) {
             console.error('Error creating offer:', error);
-            this.showError('Error setting up voice connection: ' + error.message);
         }
-    }
-
-    /**
-     * Modify SDP to improve echo cancellation
-     * @param {string} sdp - Session Description Protocol string
-     * @returns {string} - Modified SDP
-     */
-    modifySdpForEchoCancellation(sdp) {
-        // Add stereo=0 and useinbandfec=1 to opus codec for better echo handling
-        return sdp.replace(/(a=rtpmap:\d+ opus\/48000\/2)/g, '$1\r\na=fmtp:111 minptime=10;useinbandfec=1;stereo=0');
     }
 
     /**
@@ -426,97 +281,21 @@ class VoiceHandler {
     }
 
     /**
-     * Initialize the Web Audio API context
-     */
-    initAudioContext() {
-        if (this.audioContext) {
-            this.audioContext.close();
-        }
-        
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // Create audio source from the microphone stream
-        if (this.localStream) {
-            const source = this.audioContext.createMediaStreamSource(this.localStream);
-            
-            // Create gain node for volume control
-            const gainNode = this.audioContext.createGain();
-            source.connect(gainNode);
-            
-            // Set up noise suppression if available
-            if (this.audioContext.createNoiseSuppressor) {
-                const noiseSuppressor = this.audioContext.createNoiseSuppressor();
-                gainNode.connect(noiseSuppressor);
-                noiseSuppressor.connect(this.audioContext.destination);
-                this.audioProcessors.noiseSuppressor = noiseSuppressor;
-            } else {
-                // Fallback for browsers that don't support native noise suppression
-                gainNode.connect(this.audioContext.destination);
-            }
-            
-            this.audioProcessors.gainNode = gainNode;
-        }
-    }
-
-    /**
-     * Set microphone mute state
-     * @param {boolean} muted - Whether the microphone should be muted
-     */
-    setMicMuted(muted) {
-        if (!this.localStream) return;
-        
-        // Mute/unmute all audio tracks
-        this.localStream.getAudioTracks().forEach(track => {
-            track.enabled = !muted;
-        });
-    }
-
-    /**
-     * Set output volume for all remote streams
-     * @param {number} volume - Volume level (0 to 1)
-     */
-    setVolume(volume) {
-        this.volume = Math.max(0, Math.min(1, volume));
-        
-        // Update volume for all audio elements
-        Object.keys(this.peerConnections).forEach(peerId => {
-            const audioEl = document.getElementById(`audio-${peerId}`);
-            if (audioEl) {
-                audioEl.volume = this.volume;
-            }
-        });
-    }
-
-    /**
-     * Toggle noise suppression
-     * @param {boolean} enabled - Whether noise suppression should be enabled
-     */
-    toggleNoiseSuppression(enabled) {
-        if (!this.audioContext || !this.localStream) return;
-        
-        if (enabled) {
-            // Re-initialize audio context with noise suppression
-            this.initAudioContext();
-        } else {
-            // Disable noise suppression if it exists
-            if (this.audioProcessors.noiseSuppressor) {
-                this.audioProcessors.noiseSuppressor.disconnect();
-                this.audioProcessors.gainNode.connect(this.audioContext.destination);
-            }
-        }
-    }
-
-    /**
      * Set up voice activity detection for the local stream
      */
     setupVoiceActivityDetection() {
         if (!this.localStream) return;
         
-        // Create a new ScriptProcessor or AudioWorklet for voice detection
+        // Create an audio context if needed
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Create an analyser node
         const analyser = this.audioContext.createAnalyser();
         analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.5;
         
+        // Connect the local stream to the analyser
         const source = this.audioContext.createMediaStreamSource(this.localStream);
         source.connect(analyser);
         
@@ -540,11 +319,11 @@ class VoiceHandler {
             }
             const average = sum / bufferLength;
             
-            // Threshold for speaking detection (higher value to reduce false positives)
-            const threshold = 20;
+            // Threshold for speaking detection
+            const threshold = 15; // Adjust based on testing
             
             // Check if speaking status changed
-            if (average > threshold && !isSpeaking && !this.isMuted) {
+            if (average > threshold && !isSpeaking && this.localStream.getAudioTracks()[0].enabled) {
                 isSpeaking = true;
                 this.socket.emit('speakingStateChanged', { 
                     channelId: this.channelId,
@@ -571,13 +350,15 @@ class VoiceHandler {
             }
             
             // Continue checking
-            requestAnimationFrame(checkAudioLevel);
+            if (this.localStream) {
+                requestAnimationFrame(checkAudioLevel);
+            }
         };
         
         // Start checking audio levels
         checkAudioLevel();
     }
-    
+
     /**
      * Set up voice activity detection for a remote stream
      * @param {MediaStream} stream - The remote audio stream
@@ -586,10 +367,14 @@ class VoiceHandler {
     setupRemoteVoiceDetection(stream, peerId) {
         if (!stream || !this.audioContext) return;
         
+        // Create an audio context if needed
+        if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
         // Create analyser node
         const analyser = this.audioContext.createAnalyser();
         analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.5;
         
         // Connect the remote stream to the analyser
         const source = this.audioContext.createMediaStreamSource(stream);
@@ -615,8 +400,8 @@ class VoiceHandler {
             }
             const average = sum / bufferLength;
             
-            // Threshold for speaking detection (higher value to reduce false positives)
-            const threshold = 20;
+            // Threshold for speaking detection
+            const threshold = 15; // Adjust based on testing
             
             // Update UI based on speaking status
             const participantEl = document.getElementById(`participant-${peerId}`);
@@ -659,29 +444,41 @@ class VoiceHandler {
     }
 
     /**
-     * Show an error notification
-     * @param {string} message - Error message
+     * Set microphone mute state
+     * @param {boolean} muted - Whether the microphone should be muted
      */
-    showError(message) {
-        console.error('Voice Error:', message);
-        // Check if the notification function exists in the global scope
-        if (typeof showNotification === 'function') {
-            showNotification(message, 'error');
-        } else {
-            alert('Voice Error: ' + message);
-        }
+    setMicMuted(muted) {
+        if (!this.localStream) return;
+        
+        // Mute/unmute all audio tracks
+        this.localStream.getAudioTracks().forEach(track => {
+            track.enabled = !muted;
+        });
     }
 
     /**
-     * Show a notification
-     * @param {string} message - Notification message
-     * @param {string} type - Type of notification
+     * Set output volume for all remote streams
+     * @param {number} volume - Volume level (0 to 1)
      */
-    showNotification(message, type = 'info') {
-        console.log('Voice Notification:', message);
-        // Check if the notification function exists in the global scope
-        if (typeof showNotification === 'function') {
-            showNotification(message, type);
-        }
+    setVolume(volume) {
+        this.volume = Math.max(0, Math.min(1, volume));
+        
+        // Update volume for all audio elements
+        Object.keys(this.peerConnections).forEach(peerId => {
+            const audioEl = document.getElementById(`audio-${peerId}`);
+            if (audioEl) {
+                audioEl.volume = this.volume;
+            }
+        });
+    }
+
+    /**
+     * Toggle noise suppression
+     * @param {boolean} enabled - Whether noise suppression should be enabled
+     */
+    toggleNoiseSuppression(enabled) {
+        console.log('Noise suppression toggled:', enabled);
+        // This is a simplified version without actually changing noise suppression
+        // as browser support varies. The UI button still works though.
     }
 }

@@ -1,14 +1,16 @@
+/**
+ * GyaanGanga Voice Channel Server
+ * Express and Socket.io implementation for WebRTC signaling
+ */
 const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
 const cors = require('cors');
 
-// Create Express app and server
+// Create Express app
 const app = express();
 const server = http.createServer(app);
-
-// Set up Socket.io with CORS enabled
 const io = socketIO(server, {
     cors: {
         origin: '*',
@@ -16,13 +18,13 @@ const io = socketIO(server, {
     }
 });
 
-// Enable CORS for Express
+// Enable CORS
 app.use(cors());
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Voice channels configuration
+// Available voice channels
 const channels = {
     'class-8': { name: 'Class 8', participants: {}, maxParticipants: 30 },
     'class-9': { name: 'Class 9', participants: {}, maxParticipants: 30 },
@@ -32,9 +34,11 @@ const channels = {
     'entrance-prep': { name: 'Entrance Prep', participants: {}, maxParticipants: 50 }
 };
 
-// Connected users storage
+// Connected users
 const users = {};
-const inactivityTimeout = 10 * 60 * 1000; // 10 minutes
+
+// Clean up inactive users (10 minutes)
+const inactivityTimeout = 10 * 60 * 1000;
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
@@ -152,6 +156,28 @@ io.on('connection', (socket) => {
         }
     });
     
+    // Handle speaking state change
+    socket.on('speakingStateChanged', (data) => {
+        const { channelId, isSpeaking } = data;
+        const user = users[socket.id];
+        
+        if (user && user.channelId === channelId) {
+            user.isSpeaking = isSpeaking;
+            user.lastActivity = Date.now();
+            
+            // Update in channel participants
+            if (channels[channelId] && channels[channelId].participants[socket.id]) {
+                channels[channelId].participants[socket.id].isSpeaking = isSpeaking;
+                
+                // Notify all users in the channel about speaking status
+                io.to(channelId).emit('speakingStatus', {
+                    userId: socket.id,
+                    isSpeaking: isSpeaking
+                });
+            }
+        }
+    });
+    
     // Teacher muting a user
     socket.on('muteUser', (data) => {
         const { userId } = data;
@@ -216,28 +242,6 @@ io.on('connection', (socket) => {
         }
     });
     
-    // Handle speaking state change
-    socket.on('speakingStateChanged', (data) => {
-        const { channelId, isSpeaking } = data;
-        const user = users[socket.id];
-        
-        if (user && user.channelId === channelId) {
-            user.isSpeaking = isSpeaking;
-            user.lastActivity = Date.now();
-            
-            // Update in channel participants
-            if (channels[channelId] && channels[channelId].participants[socket.id]) {
-                channels[channelId].participants[socket.id].isSpeaking = isSpeaking;
-                
-                // Notify all users in the channel about speaking status
-                io.to(channelId).emit('speakingStatus', {
-                    userId: socket.id,
-                    isSpeaking: isSpeaking
-                });
-            }
-        }
-    });
-    
     // Send emoji reaction
     socket.on('sendEmojiReaction', (data) => {
         const { channelId, emoji } = data;
@@ -290,7 +294,6 @@ io.on('connection', (socket) => {
         
         if (user) {
             user.lastActivity = Date.now();
-            console.log(`Relaying offer from ${socket.id} to ${to}`);
             
             // Forward the offer to the target peer
             io.to(to).emit('offer', {
@@ -307,7 +310,6 @@ io.on('connection', (socket) => {
         
         if (user) {
             user.lastActivity = Date.now();
-            console.log(`Relaying answer from ${socket.id} to ${to}`);
             
             // Forward the answer to the target peer
             io.to(to).emit('answer', {
@@ -324,7 +326,6 @@ io.on('connection', (socket) => {
         
         if (user) {
             user.lastActivity = Date.now();
-            console.log(`Relaying ICE candidate from ${socket.id} to ${to}`);
             
             // Forward the ICE candidate to the target peer
             io.to(to).emit('iceCandidate', {

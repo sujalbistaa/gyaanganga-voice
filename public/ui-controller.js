@@ -33,55 +33,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Add polyfill for :contains selector for emoji animation positioning
-    if (!Element.prototype.matches) {
-        Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
-    }
-    
-    if (window.jQuery) {
-        jQuery.expr[':'].contains = function(a, i, m) {
-            return jQuery(a).text().toUpperCase().indexOf(m[3].toUpperCase()) >= 0;
-        };
-    } else {
-        // Add a basic implementation without jQuery
-        document.querySelector = document.querySelector || function(selector) {
-            if (selector.startsWith('[id^="participant-"]:contains(')) {
-                const username = selector.match(/'([^']+)'/)[1];
-                const participants = document.querySelectorAll('[id^="participant-"]');
-                
-                for (let i = 0; i < participants.length; i++) {
-                    if (participants[i].textContent.includes(username)) {
-                        return participants[i];
-                    }
-                }
-                
-                return null;
-            }
-            
-            return document._querySelector(selector);
-        };
-    }
-    
-    // Theme toggle functionality (can be expanded in the future)
-    function setupThemeToggle() {
-        // Check for saved theme preference or respect OS preference
-        const prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const savedTheme = localStorage.getItem('theme');
-        
-        if (savedTheme === 'light') {
-            document.body.classList.add('light-theme');
-        } else if (!savedTheme && !prefersDarkMode) {
-            document.body.classList.add('light-theme');
-        }
-        
-        // Theme toggle can be added to settings menu in the future
-    }
-    
-    // Smooth scroll to bottom of participants list when new users join
-    function scrollToBottom(element) {
-        element.scrollTop = element.scrollHeight;
-    }
-    
     // Set up keyboard shortcuts
     function setupKeyboardShortcuts() {
         document.addEventListener('keydown', (e) => {
@@ -139,7 +90,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function focusUsernameInput() {
         const usernameInput = document.getElementById('username-input');
         if (usernameInput) {
-            usernameInput.focus();
+            setTimeout(() => {
+                usernameInput.focus();
+            }, 500);
         }
     }
     
@@ -168,7 +121,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize UI enhancements
     function initUI() {
-        setupThemeToggle();
         setupKeyboardShortcuts();
         focusUsernameInput();
         setupEnterKeyLogin();
@@ -277,7 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 
                 .tooltip-container {
-                    left: -120px;
+                    left: 0;
                     width: 260px;
                 }
             }
